@@ -1,5 +1,6 @@
 package com.example.employee_service.service.impl;
 
+
 import com.example.employee_service.dto.APIResponseDto;
 import com.example.employee_service.dto.DepartmentDto;
 import com.example.employee_service.dto.EmployeeDto;
@@ -8,6 +9,7 @@ import com.example.employee_service.entity.Employee;
 import com.example.employee_service.mapper.EmployeeMapper;
 import com.example.employee_service.repository.EmployeeRepository;
 import com.example.employee_service.service.EmployeeService;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.AllArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,24 +20,38 @@ import org.springframework.web.reactive.function.client.WebClient;
 @AllArgsConstructor
 public class EmployeeServiceImpl implements EmployeeService {
 
-    private static Logger LOGGER = LoggerFactory.getLogger(EmployeeServiceImpl.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(EmployeeServiceImpl.class);
 
     private EmployeeRepository employeeRepository;
+
+    // private RestTemplate restTemplate;
     private WebClient webClient;
+    // private APIClient apiClient;
 
     @Override
     public EmployeeDto saveEmployee(EmployeeDto employeeDto) {
+
         Employee employee = EmployeeMapper.toEntity(employeeDto);
-        Employee savedEmployee = employeeRepository.save(employee);
-        return EmployeeMapper.toDto(savedEmployee);
+
+        Employee saveDEmployee = employeeRepository.save(employee);
+
+        EmployeeDto savedEmployeeDto = EmployeeMapper.toDto(saveDEmployee);
+
+        return savedEmployeeDto;
     }
 
+    //@CircuitBreaker(name = "${spring.application.name}", fallbackMethod = "getDefaultDepartment")
+    @Retry(name = "${spring.application.name}", fallbackMethod = "getDefaultDepartment")
     @Override
     public APIResponseDto getEmployeeById(Long employeeId) {
-        LOGGER.info("inside the getEmployeeById method");
 
-        Employee employee = employeeRepository.findById(employeeId)
-                .orElseThrow(() -> new RuntimeException("Employee not found"));
+        LOGGER.info("inside getEmployeeById() method");
+        Employee employee = employeeRepository.findById(employeeId).get();
+
+//        ResponseEntity<DepartmentDto> responseEntity = restTemplate.getForEntity("http://DEPARTMENT-SERVICE/api/departments/" + employee.getDepartmentCode(),
+//                DepartmentDto.class);
+//
+//        DepartmentDto departmentDto = responseEntity.getBody();
 
         DepartmentDto departmentDto = webClient.get()
                 .uri("http://localhost:8080/api/departments/" + employee.getDepartmentCode())
@@ -43,8 +59,10 @@ public class EmployeeServiceImpl implements EmployeeService {
                 .bodyToMono(DepartmentDto.class)
                 .block();
 
+        //  DepartmentDto departmentDto = apiClient.getDepartment(employee.getDepartmentCode());
+
         OrganizationDto organizationDto = webClient.get()
-                .uri("http://localhost:8083/api/organizations/code/" + employee.getOrganizationCode())
+                .uri("http://localhost:8083/api/organizations/" + employee.getOrganizationCode())
                 .retrieve()
                 .bodyToMono(OrganizationDto.class)
                 .block();
@@ -54,40 +72,26 @@ public class EmployeeServiceImpl implements EmployeeService {
         APIResponseDto apiResponseDto = new APIResponseDto();
         apiResponseDto.setEmployee(employeeDto);
         apiResponseDto.setDepartment(departmentDto);
-        apiResponseDto.setOrganization(organizationDto); // Set organization details
-
+        apiResponseDto.setOrganization(organizationDto);
         return apiResponseDto;
     }
 
-    // Fallback method for getEmployeeById
-    public APIResponseDto getDefaultDepartment(Long employeeId, Throwable throwable) {
-        LOGGER.info("inside the getDefaultDepartment method");
+    public APIResponseDto getDefaultDepartment(Long employeeId, Exception exception) {
 
-        EmployeeDto defaultEmployee = new EmployeeDto();
-        defaultEmployee.setId(employeeId);
-        defaultEmployee.setFirstName("Default");
-        defaultEmployee.setLastName("Employee");
-        defaultEmployee.setEmail("default@example.com");
-        defaultEmployee.setDepartmentCode("DEFAULT_DEPT");
-        defaultEmployee.setOrganizationCode("DEFAULT_ORG");
+        LOGGER.info("inside getDefaultDepartment() method");
 
-        DepartmentDto defaultDepartment = new DepartmentDto();
-        defaultDepartment.setId(0L);
-        defaultDepartment.setDepartmentName("Default Department");
-        defaultDepartment.setDepartmentDescription("This is a default department");
-        defaultDepartment.setDepartmentCode("DEFAULT_DEPT");
+        Employee employee = employeeRepository.findById(employeeId).get();
 
-        OrganizationDto defaultOrganization = new OrganizationDto();
-        defaultOrganization.setId(0L);
-        defaultOrganization.setOrganizationName("Default Organization");
-        defaultOrganization.setOrganizationDescription("This is a default organization");
-        defaultOrganization.setOrganizationCode("DEFAULT_ORG");
+        DepartmentDto departmentDto = new DepartmentDto();
+        departmentDto.setDepartmentName("R&D Department");
+        departmentDto.setDepartmentCode("RD001");
+        departmentDto.setDepartmentDescription("Research and Development Department");
 
-        APIResponseDto defaultResponse = new APIResponseDto();
-        defaultResponse.setEmployee(defaultEmployee);
-        defaultResponse.setDepartment(defaultDepartment);
-        defaultResponse.setOrganization(defaultOrganization);
+        EmployeeDto employeeDto = EmployeeMapper.toDto(employee);
 
-        return defaultResponse;
+        APIResponseDto apiResponseDto = new APIResponseDto();
+        apiResponseDto.setEmployee(employeeDto);
+        apiResponseDto.setDepartment(departmentDto);
+        return apiResponseDto;
     }
 }
